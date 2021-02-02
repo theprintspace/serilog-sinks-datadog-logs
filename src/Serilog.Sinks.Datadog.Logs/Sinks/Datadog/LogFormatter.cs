@@ -3,12 +3,16 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2019 Datadog, Inc.
 
+using System;
 using System.Text;
 using System.IO;
 using System.Collections.Generic;
 using Serilog.Events;
 using Serilog.Formatting.Json;
+
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 namespace Serilog.Sinks.Datadog.Logs
 {
     public class LogFormatter
@@ -33,7 +37,13 @@ namespace Serilog.Sinks.Datadog.Logs
         /// </summary>
         private static readonly JsonSerializerSettings settings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
 
-        public LogFormatter(string source, string service, string host, string[] tags)
+		static readonly string s_env = Environment.GetEnvironmentVariable( "DD_ENV" );
+		static readonly string s_version = Environment.GetEnvironmentVariable( "DD_VERSION" );
+
+		public static string Env { get; set; }
+		public static string Version { get; set; }
+
+		public LogFormatter(string source, string service, string host, string[] tags)
         {
             _source = source ?? CSHARP;
             _service = service;
@@ -53,9 +63,22 @@ namespace Serilog.Sinks.Datadog.Logs
             // internal structure of the logEvent to give a nicely formatted JSON
             formatter.Format(logEvent, writer);
 
-            // Convert the JSON to a dictionnary and add the DataDog properties
-            var logEventAsDict = JsonConvert.DeserializeObject<Dictionary<string, dynamic>>(payload.ToString());
-            if (_source != null) { logEventAsDict.Add("ddsource", _source); }
+			// Convert the JSON to a dictionary and add the DataDog properties
+			var logEventAsDict = JsonConvert.DeserializeObject<Dictionary<string, object>>( payload.ToString() );
+
+			var hasProperties = logEventAsDict.TryGetValue( "Properties", out var properties );
+			if ( hasProperties && properties is JObject jo )
+			{
+				jo.TryGetValue( "dd_span_id", out var span_id );
+				jo.TryGetValue( "dd_trace_id", out var trace_id );
+
+				logEventAsDict.Add( "dd", new { span_id, trace_id } );
+			}
+
+			logEventAsDict.Add( "env", Env ?? s_env );
+			logEventAsDict.Add( "version", Version ?? s_version );
+
+			if (_source != null) { logEventAsDict.Add("ddsource", _source); }
             if (_service != null) { logEventAsDict.Add("service",_service); }
             if (_host != null) { logEventAsDict.Add("host", _host); }
             if (_tags != null) { logEventAsDict.Add("ddtags", _tags); }
